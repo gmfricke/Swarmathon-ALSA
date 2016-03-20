@@ -1,3 +1,10 @@
+# Swarmathon-ALSA
+
+This is a fork of the Swarmathon-ROS project (see below). I am using it to implement the ALSA search algorithm for my dissertation.
+
+1) Uses a Levy search pattern.
+2) The exponent of the Levy search pattern is chosen to match the encountered pattern of targets.
+
 # Swarmathon-ROS
 
 This repository is a ROS (Robot Operating System) controller framework for the Swarmie robots used in the [NASA Swarmathon](http://www.nasaswarmathon.com), a national swarm robotics competition. This particular framework is a ROS implementation of the CPFA (central-place foraging algorithm) developed for [iAnt robot swarms](http://swarms.cs.unm.edu) at the [University of New Mexico](http://www.unm.edu/).
