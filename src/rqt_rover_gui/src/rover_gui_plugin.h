@@ -32,6 +32,7 @@
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Range.h>
 #include <sensor_msgs/Imu.h>
+#include <std_msgs/String.h>
 #include <std_msgs/Int16.h>
 #include <std_msgs/UInt8.h>
 #include <pluginlib/class_list_macros.h>
@@ -86,6 +87,7 @@ namespace rqt_rover_gui {
     QString startROSJoyNode();
     QString stopROSJoyNode();
 
+    void statusEventHandler(const ros::MessageEvent<std_msgs::String const>& event);
     void joyEventHandler(const sensor_msgs::Joy::ConstPtr& joy_msg);
     void cameraEventHandler(const sensor_msgs::ImageConstPtr& image);
     void EKFEventHandler(const ros::MessageEvent<const nav_msgs::Odometry> &event);
@@ -138,16 +140,21 @@ namespace rqt_rover_gui {
     void GPSCheckboxToggledEventHandler(bool checked);
     void EKFCheckboxToggledEventHandler(bool checked);
     void encoderCheckboxToggledEventHandler(bool checked);
-    void autonomousRadioButtonEventHandler(bool marked);
-    void allAutonomousRadioButtonEventHandler(bool marked);
+
     void joystickRadioButtonEventHandler(bool marked);
+    void autonomousRadioButtonEventHandler(bool marked);
+    void allAutonomousButtonEventHandler();
+    void allStopButtonEventHandler();
+
     void buildSimulationButtonEventHandler();
     void clearSimulationButtonEventHandler();
     void visualizeSimulationButtonEventHandler();
-    void gazeboClientFinishedEventHandler();
     void gazeboServerFinishedEventHandler();  
     void displayLogMessage(QString msg);
 
+    // Needed to refocus the keyboard events when the user clicks on the widget list
+    // to the main widget so keyboard manual control is handled properly
+    void refocusKeyboardEventHandler();
 
   private:
 
@@ -168,6 +175,7 @@ namespace rqt_rover_gui {
     ros::Subscriber us_right_subscriber;
     ros::Subscriber imu_subscriber;
 
+    map<string,ros::Subscriber> status_subscribers;
     map<string,ros::Subscriber> obstacle_subscribers;
     map<string,ros::Subscriber> targetDropOffSubscribers;
     map<string,ros::Subscriber> targetPickUpSubscribers;
@@ -180,13 +188,13 @@ namespace rqt_rover_gui {
     Ui::RoverGUI ui;
 
     QProcess* joy_process;
-    QTimer* timer; // for rover polling
+    QTimer* rover_poll_timer; // for rover polling
 
     QString log_messages;
     GazeboSimManager sim_mgr;
 
     map<string,int> rover_control_state;
-    bool all_autonomous;
+    map<string,string> rover_statuses;
 
     float arena_dim; // in meters
 
@@ -195,7 +203,7 @@ namespace rqt_rover_gui {
 
     bool display_sim_visualization;
 
-    // Object clearance. These values are used to quickly determine where objects can be placed int time simulatio
+    // Object clearance. These values are used to quickly determine where objects can be placed int time simulation
     float target_cluster_size_64_clearance;
     float target_cluster_size_16_clearance;
     float target_cluster_size_4_clearance;

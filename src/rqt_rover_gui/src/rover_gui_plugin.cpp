@@ -5,6 +5,7 @@
 // License: GPL3
 
 #include <rover_gui_plugin.h>
+#include <Version.h>
 #include <pluginlib/class_list_macros.h>
 #include <QDir>
 #include <QtXml>
@@ -46,7 +47,6 @@ namespace rqt_rover_gui
   {
     setObjectName("RoverGUI");
     log_messages = "";
-    all_autonomous = false;
     joy_process = NULL;
 
     obstacle_call_count = 0;
@@ -94,10 +94,10 @@ namespace rqt_rover_gui
     widget->setFocus();
 
     // GIT_VERSION is passed in as a compile time definition (see CMakeLists.txt). The version is taken from the last git tag.
-    QString version_qstr("<font color='white'>"+QString::fromUtf8(GIT_VERSION)+"</font>");
+    QString version_qstr("<font color='white'>"+GIT_VERSION+"</font>");
     ui.version_number_label->setText(version_qstr);
 
-    widget->setWindowTitle("Rover Interface: Built on " + QString::fromUtf8(BUILD_TIME) );
+    widget->setWindowTitle("Rover Interface: Built on " + BUILD_TIME );
 
     string rover_name_msg = "<font color='white'>Rover: " + selected_rover_name + "</font>";
     QString rover_name_msg_qstr = QString::fromStdString(rover_name_msg);
@@ -105,12 +105,15 @@ namespace rqt_rover_gui
 
     // Setup QT message connections
     connect(ui.rover_list, SIGNAL(currentItemChanged(QListWidgetItem*,QListWidgetItem*)), this, SLOT(currentRoverChangedEventHandler(QListWidgetItem*,QListWidgetItem*)));
+    connect(ui.rover_list, SIGNAL(itemDoubleClicked(QListWidgetItem*)), this, SLOT(refocusKeyboardEventHandler()));
+    connect(ui.rover_list, SIGNAL(itemClicked(QListWidgetItem*)), this, SLOT(refocusKeyboardEventHandler()));
     connect(ui.ekf_checkbox, SIGNAL(toggled(bool)), this, SLOT(EKFCheckboxToggledEventHandler(bool)));
     connect(ui.gps_checkbox, SIGNAL(toggled(bool)), this, SLOT(GPSCheckboxToggledEventHandler(bool)));
     connect(ui.encoder_checkbox, SIGNAL(toggled(bool)), this, SLOT(encoderCheckboxToggledEventHandler(bool)));
     connect(ui.autonomous_control_radio_button, SIGNAL(toggled(bool)), this, SLOT(autonomousRadioButtonEventHandler(bool)));
-    connect(ui.all_autonomous_control_radio_button, SIGNAL(toggled(bool)), this, SLOT(allAutonomousRadioButtonEventHandler(bool)));
     connect(ui.joystick_control_radio_button, SIGNAL(toggled(bool)), this, SLOT(joystickRadioButtonEventHandler(bool)));
+    connect(ui.all_autonomous_button, SIGNAL(pressed()), this, SLOT(allAutonomousButtonEventHandler()));
+    connect(ui.all_stop_button, SIGNAL(pressed()), this, SLOT(allStopButtonEventHandler()));
     connect(ui.build_simulation_button, SIGNAL(pressed()), this, SLOT(buildSimulationButtonEventHandler()));
     connect(ui.clear_simulation_button, SIGNAL(pressed()), this, SLOT(clearSimulationButtonEventHandler()));
     connect(ui.visualize_simulation_button, SIGNAL(pressed()), this, SLOT(visualizeSimulationButtonEventHandler()));
@@ -127,9 +130,9 @@ namespace rqt_rover_gui
     displayLogMessage("Searching for rovers...");
 
     // Add discovered rovers to the GUI list
-    timer = new QTimer(this);
-    connect(timer, SIGNAL(timeout()), this, SLOT(pollRoversTimerEventHandler()));
-    timer->start(5000);
+    rover_poll_timer = new QTimer(this);
+    connect(rover_poll_timer, SIGNAL(timeout()), this, SLOT(pollRoversTimerEventHandler()));
+    rover_poll_timer->start(5000);
 
     // Setup the initial display parameters for the map
     ui.map_frame->setDisplayGPSData(ui.gps_checkbox->isChecked());
@@ -144,9 +147,13 @@ namespace rqt_rover_gui
 
     ui.visualize_simulation_button->setEnabled(false);
     ui.clear_simulation_button->setEnabled(false);
+    ui.all_autonomous_button->setEnabled(false);
+    ui.all_stop_button->setEnabled(false);
 
     ui.visualize_simulation_button->setStyleSheet("color: grey; border:2px solid grey;");
     ui.clear_simulation_button->setStyleSheet("color: grey; border:2px solid grey;");
+    ui.all_autonomous_button->setStyleSheet("color: grey; border:2px solid grey;");
+    ui.all_stop_button->setStyleSheet("color: grey; border:2px solid grey;");
 
     //QString return_msg = startROSJoyNode();
     //displayLogMessage(return_msg);
@@ -155,7 +162,7 @@ namespace rqt_rover_gui
   void RoverGUIPlugin::shutdownPlugin()
   {
     clearSimulationButtonEventHandler();
-    timer->stop();
+    rover_poll_timer->stop();
     stopROSJoyNode();
     ros::shutdown();
   }
@@ -170,57 +177,58 @@ void RoverGUIPlugin::restoreSettings(const qt_gui_cpp::Settings& plugin_settings
 
 void RoverGUIPlugin::joyEventHandler(const sensor_msgs::Joy::ConstPtr& joy_msg)
 {
+     if (joystick_publisher)
+        {
+        //Set the gui values. Filter values to be large enough to move the physical rover.
+        if (joy_msg->axes[4] >= 0.1)
+        {
+            emit joystickForwardUpdate(joy_msg->axes[4]);
+        }
+        if (joy_msg->axes[4] <= -0.1)
+        {
+            emit joystickBackUpdate(-joy_msg->axes[4]);
+        }
+        //If value is too small, display 0.
+        if (abs(joy_msg->axes[4]) < 0.1)
+        {
+            emit joystickForwardUpdate(0);
+            emit joystickBackUpdate(0);
+        }
 
-    //Set the gui values. Filter values to be large enough to move the physical rover.
-    if (joy_msg->axes[4] >= 0.1)
-    {
-        emit joystickForwardUpdate(joy_msg->axes[4]);
-    }
-    if (joy_msg->axes[4] <= -0.1)
-    {
-        emit joystickBackUpdate(-joy_msg->axes[4]);
-    }
-    //If value is too small, display 0.
-    if (abs(joy_msg->axes[4]) < 0.1)
-    {
-        emit joystickForwardUpdate(0);
-        emit joystickBackUpdate(0);
-    }
+        if (joy_msg->axes[3] >= 0.1)
+        {
+            emit joystickLeftUpdate(joy_msg->axes[3]);
+        }
+        if (joy_msg->axes[3] <= -0.1)
+        {
+            emit joystickRightUpdate(-joy_msg->axes[3]);
+        }
+        //If value is too small, display 0.
+        if (abs(joy_msg->axes[3]) < 0.1)
+        {
+            emit joystickLeftUpdate(0);
+            emit joystickRightUpdate(0);
+        }
 
-    if (joy_msg->axes[3] >= 0.1)
-    {
-        emit joystickLeftUpdate(joy_msg->axes[3]);
-    }
-    if (joy_msg->axes[3] <= -0.1)
-    {
-        emit joystickRightUpdate(-joy_msg->axes[3]);
-    }
-    //If value is too small, display 0.
-    if (abs(joy_msg->axes[3]) < 0.1)
-    {
-        emit joystickLeftUpdate(0);
-        emit joystickRightUpdate(0);
-    }
+        // Magic axis values in the code below were taken the rover_driver_rqt_motor code /joystick output for default linear and angular velocities.
+        // Magic indicies are taken from rover_motor.cpp.
+        // This way the code is consistent with the existing GUI joystick.
+        // A better way would be to standardize a manual movement control interface and requre all input mechanisms to take input from the user
+        // and repackage te information according to the interface spec.
+        geometry_msgs::Twist standardized_joy_msg;
 
-// Magic axis values in the code below were taken the rover_driver_rqt_motor code /joystick output for default linear and angular velocities.
-// Magic indicies are taken from rover_motor.cpp.
-// This way the code is consistent with the existing GUI joystick.
-// A better way would be to standardize a manual movement control interface and requre all input mechanisms to take input from the user
-// and repackage te information according to the interface spec.
-    geometry_msgs::Twist standardized_joy_msg;
+        if (abs(joy_msg->axes[4]) >= 0.1)
+        {
+          standardized_joy_msg.linear.x = joy_msg->axes[4];
+        }
 
-    if (abs(joy_msg->axes[4]) >= 0.1)
-    {
-      standardized_joy_msg.linear.x = joy_msg->axes[4];
+        if (abs(joy_msg->axes[3]) >= 0.1)
+        {
+          standardized_joy_msg.angular.z = joy_msg->axes[3];
+        }
+
+        joystick_publisher.publish(standardized_joy_msg);
     }
-
-    if (abs(joy_msg->axes[3]) >= 0.1)
-    {
-      standardized_joy_msg.angular.z = joy_msg->axes[3];
-    }
-
-    joystick_publisher.publish(standardized_joy_msg);
-
 }
 
 void RoverGUIPlugin::EKFEventHandler(const ros::MessageEvent<const nav_msgs::Odometry> &event)
@@ -445,6 +453,24 @@ void RoverGUIPlugin::targetDropOffEventHandler(const ros::MessageEvent<const sen
     }
 }
 
+// Receives and stores the status update messages from rovers
+void RoverGUIPlugin::statusEventHandler(const ros::MessageEvent<std_msgs::String const> &event)
+{
+    const ros::M_string& header = event.getConnectionHeader();
+    ros::Time receipt_time = event.getReceiptTime();
+
+    // Extract rover name from the message source
+    string topic = header.at("topic");
+    size_t found = topic.find("/status");
+    string rover_name = topic.substr(1,found-1);
+
+    const std_msgs::StringConstPtr& msg = event.getMessage();
+
+    string status = msg->data;
+
+    rover_statuses[rover_name] = status;
+}
+
 // Counts the number of obstacle avoidance calls
 void RoverGUIPlugin::obstacleEventHandler(const ros::MessageEvent<const std_msgs::UInt8> &event)
 {
@@ -467,29 +493,45 @@ void RoverGUIPlugin::obstacleEventHandler(const ros::MessageEvent<const std_msgs
 
 void RoverGUIPlugin::currentRoverChangedEventHandler(QListWidgetItem *current, QListWidgetItem *previous)
 {
-    // Refocus on the main ui widget so the rover list doesn't start capturing key strokes making keyboard rover driving not work.
-    widget->setFocus();
+    displayLogMessage("Selcted Rover Changed");
 
-    if (!current ) return; // Check to make sure the current selection isn't null
+    if (!current) return; // Check to make sure the current selection isn't null
 
-    selected_rover_name = current->text().toStdString();
+    // Extract rover name
+    string rover_name_and_status = current->text().toStdString();
+
+    // Rover names start at the begining of the rover name and status string and end at the first space
+    size_t rover_name_length = rover_name_and_status.find_first_of(" ");
+    string ui_rover_name = rover_name_and_status.substr(0, rover_name_length);
+
+    selected_rover_name = ui_rover_name;
+
     string rover_name_msg = "<font color='white'>Rover: " + selected_rover_name + "</font>";
     QString rover_name_msg_qstr = QString::fromStdString(rover_name_msg);
     ui.rover_name->setText(rover_name_msg_qstr);
 
     displayLogMessage(QString("Selected rover: ") + QString::fromStdString(selected_rover_name));
 
-    //QString model_path = "~/rover_workspace/misc/models/"++"/model.sdf";
-    QString model_path = QDir::homePath()+"/rover_workspace/simulation/models/"+QString::fromStdString(selected_rover_name)+"/model.sdf";
-    readRoverModelXML(model_path);
+    // Attempt to read the simulation model xml file if it exists. If it does not exist assume this is a physical rover.
+    const char *name = "GAZEBO_MODEL_PATH";
+    char *model_root_cstr;
+    model_root_cstr = getenv(name);
+    QString model_root(model_root_cstr);
 
-    setupSubscribers();
-    setupPublishers();
+    QString model_path = model_root+"/"+QString::fromStdString(selected_rover_name)+"/model.sdf";
+
+    readRoverModelXML(model_path);
+    
+    //Set up subscribers
+    image_transport::ImageTransport it(nh);
+    camera_subscriber = it.subscribe("/"+selected_rover_name+"/camera/image", 1, &RoverGUIPlugin::cameraEventHandler, this, image_transport::TransportHints("theora"));
+    imu_subscriber = nh.subscribe("/"+selected_rover_name+"/imu", 10, &RoverGUIPlugin::IMUEventHandler, this);
+    us_center_subscriber = nh.subscribe("/"+selected_rover_name+"/sonarCenter", 10, &RoverGUIPlugin::centerUSEventHandler, this);
+    us_left_subscriber = nh.subscribe("/"+selected_rover_name+"/sonarLeft", 10, &RoverGUIPlugin::leftUSEventHandler, this);
+    us_right_subscriber = nh.subscribe("/"+selected_rover_name+"/sonarRight", 10, &RoverGUIPlugin::rightUSEventHandler, this);
 
     displayLogMessage(QString("Displaying map for ")+QString::fromStdString(selected_rover_name));
     ui.map_frame->setRoverMapToDisplay(selected_rover_name);
-
-    std::map<string, int>::iterator it = rover_control_state.find(selected_rover_name);
 
     // No entry for this rover name
     if ( 0 == rover_control_state.count(selected_rover_name) )
@@ -497,28 +539,27 @@ void RoverGUIPlugin::currentRoverChangedEventHandler(QListWidgetItem *current, Q
         // Default to joystick
         ui.joystick_control_radio_button->setChecked(true);
         ui.autonomous_control_radio_button->setChecked(false);
-        ui.all_autonomous_control_radio_button->setChecked(false);
         joystickRadioButtonEventHandler(true); // Manually trigger the joystick selected event
         rover_control_state[selected_rover_name]=1;
         displayLogMessage("New rover selected");
     }
     else
     {
-        int control_state = it->second;
+        int control_state = rover_control_state.find(selected_rover_name)->second;
 
         switch (control_state)
         {
-        case 1: ui.joystick_control_radio_button->setChecked(true);
+        case 1: // manual
+            ui.joystick_control_radio_button->setChecked(true);
             ui.autonomous_control_radio_button->setChecked(false);
-            ui.all_autonomous_control_radio_button->setChecked(false);
+            ui.joystick_frame->setHidden(false);
+            joystickRadioButtonEventHandler(true); // Manually trigger the joystick selected event
             break;
-        case 2: ui.joystick_control_radio_button->setChecked(false);
+        case 2: // autonomous
+            ui.joystick_control_radio_button->setChecked(false);
             ui.autonomous_control_radio_button->setChecked(true);
-            ui.all_autonomous_control_radio_button->setChecked(false);
-            break;
-        case 3: ui.joystick_control_radio_button->setChecked(false);
-            ui.autonomous_control_radio_button->setChecked(false);
-            ui.all_autonomous_control_radio_button->setChecked(true);
+            ui.joystick_frame->setHidden(true);
+            autonomousRadioButtonEventHandler(true); // Manually trigger the autonomous selected event
             break;
         default:
             displayLogMessage("Unknown control state: "+QString::number(control_state));
@@ -533,8 +574,6 @@ void RoverGUIPlugin::currentRoverChangedEventHandler(QListWidgetItem *current, Q
     // Enable control mode radio group now that a rover has been selected
     ui.autonomous_control_radio_button->setEnabled(true);
     ui.joystick_control_radio_button->setEnabled(true);
-    ui.all_autonomous_control_radio_button->setEnabled(true);
-
 }
 
 void RoverGUIPlugin::pollRoversTimerEventHandler()
@@ -553,6 +592,49 @@ void RoverGUIPlugin::pollRoversTimerEventHandler()
         displayLogMessage(QString("Clearing interface data for disconnected rover ") + QString::fromStdString(*it));
         ui.map_frame->clearMap(*it);
         rover_control_state.erase(*it); // Remove the control state for orphaned rovers
+        rover_statuses.erase(*it);
+
+        // If the currently selected rover disconnected, shutdown its subscribers and publishers
+        if (it->compare(selected_rover_name) == 0)
+        {
+            camera_subscriber.shutdown();
+            imu_subscriber.shutdown();
+            us_center_subscriber.shutdown();
+            us_left_subscriber.shutdown();
+            us_right_subscriber.shutdown();
+            joystick_publisher.shutdown();
+            
+            //Reset selected rover name to empty string
+            selected_rover_name = "";
+        }
+
+        // For the other rovers that disconnected...
+
+        // Shutdown the subscribers
+        status_subscribers[*it].shutdown();
+        encoder_subscribers[*it].shutdown();
+        gps_subscribers[*it].shutdown();
+        ekf_subscribers[*it].shutdown();
+        targetPickUpSubscribers[*it].shutdown();
+        targetDropOffSubscribers[*it].shutdown();
+
+        // Delete the subscribers
+        status_subscribers.erase(*it);
+        encoder_subscribers.erase(*it);
+        gps_subscribers.erase(*it);
+        ekf_subscribers.erase(*it);
+        targetPickUpSubscribers.erase(*it);
+        targetDropOffSubscribers.erase(*it);
+        
+        // Shudown Publishers
+        control_mode_publishers[*it].shutdown();
+        targetPickUpPublisher[*it].shutdown();
+        targetDropOffPublisher[*it].shutdown();
+
+        // Delete Publishers
+        control_mode_publishers.erase(*it);
+        targetPickUpPublisher.erase(*it);
+        targetDropOffPublisher.erase(*it);
     }
 
     // Wait for a rover to connect
@@ -565,95 +647,108 @@ void RoverGUIPlugin::pollRoversTimerEventHandler()
         ui.rover_list->clearSelection();
         ui.rover_list->clear();
 
-        // Disable control mode radio group since no rover has been selected
+        // Disable control mode group since no rovers are connected
         ui.autonomous_control_radio_button->setEnabled(false);
         ui.joystick_control_radio_button->setEnabled(false);
-        ui.all_autonomous_control_radio_button->setEnabled(false);
+        ui.all_autonomous_button->setEnabled(false);
+        ui.all_stop_button->setEnabled(false);
+        ui.all_autonomous_button->setStyleSheet("color: grey; border:2px solid grey;");
+        ui.all_stop_button->setStyleSheet("color: grey; border:2px solid grey;");
         return;
     }
 
     if (new_rover_names == rover_names)
     {
+
+        // Just update the statuses in ui rover list
+        for(int row = 0; row < ui.rover_list->count(); row++)
+        {
+            QListWidgetItem *item = ui.rover_list->item(row);
+
+            // Extract rover name
+            string rover_name_and_status = item->text().toStdString();
+
+            // Rover names start at the begining of the rover name and status string and end at the first space
+            size_t rover_name_length = rover_name_and_status.find_first_of(" ");
+            string ui_rover_name = rover_name_and_status.substr(0, rover_name_length);
+
+            // Get current status
+
+            QString updated_rover_status = "";
+            // Build new ui rover list string
+            try
+            {
+                updated_rover_status = QString::fromStdString(rover_statuses.at(ui_rover_name));
+            }
+            catch (std::out_of_range& e)
+            {
+                emit displayLogMessage("Error: No status entry for rover " + QString::fromStdString(ui_rover_name));
+            }
+
+
+            // Build new ui rover list string
+            QString updated_rover_name_and_status = QString::fromStdString(ui_rover_name)
+                                                    + " ("
+                                                    + updated_rover_status
+                                                    + ")";
+
+            // Update the UI
+            item->setText(updated_rover_name_and_status);
+        }
+
         return;
     }
 
     rover_names = new_rover_names;
-
-   displayLogMessage("List of connected rovers has changed");
-   selected_rover_name = "";
+    
+    displayLogMessage("List of connected rovers has changed");
+    selected_rover_name = "";
     ui.rover_list->clearSelection();
     ui.rover_list->clear();
+    
+    //Enable all autonomous button
+    ui.all_autonomous_button->setEnabled(true);
+    ui.all_autonomous_button->setStyleSheet("color: white; border:2px solid white;");
 
+    // This code is from above. Consider moving into a function or restructuring
     for(set<string>::const_iterator i = rover_names.begin(); i != rover_names.end(); ++i)
     {
-        QListWidgetItem* new_item = new QListWidgetItem(QString::fromStdString(*i));
+        //Set up publishers
+        control_mode_publishers[*i]=nh.advertise<std_msgs::UInt8>("/"+*i+"/mode", 10, true); // last argument sets latch to true
+        targetPickUpPublisher[*i] = nh.advertise<std_msgs::Int16>("/"+*i+"/targetPickUpValue", 10, this);
+        targetDropOffPublisher[*i] = nh.advertise<std_msgs::Int16>("/"+*i+"/targetDropOffValue", 10, this);
+
+        //Set up subscribers
+        status_subscribers[*i] = nh.subscribe("/"+*i+"/status", 10, &RoverGUIPlugin::statusEventHandler, this);
+        obstacle_subscribers[*i] = nh.subscribe("/"+*i+"/obstacle", 10, &RoverGUIPlugin::obstacleEventHandler, this);
+        encoder_subscribers[*i] = nh.subscribe("/"+*i+"/odom/", 10, &RoverGUIPlugin::encoderEventHandler, this);
+        ekf_subscribers[*i] = nh.subscribe("/"+*i+"/odom/ekf", 10, &RoverGUIPlugin::EKFEventHandler, this);
+        gps_subscribers[*i] = nh.subscribe("/"+*i+"/odom/navsat", 10, &RoverGUIPlugin::GPSEventHandler, this);
+        targetPickUpSubscribers[*i] = nh.subscribe("/"+*i+"/targetPickUpImage", 10, &RoverGUIPlugin::targetPickUpEventHandler, this);
+        targetDropOffSubscribers[*i] = nh.subscribe("/"+*i+"/targetDropOffImage", 10, &RoverGUIPlugin::targetDropOffEventHandler, this);
+
+        QString rover_status = "";
+        // Build new ui rover list string
+        try
+        {
+            rover_status = QString::fromStdString(rover_statuses.at(*i));
+        }
+        catch (std::out_of_range& e)
+        {
+            displayLogMessage("No status entry for rover " + QString::fromStdString(*i));
+        }
+
+        QString rover_name_and_status = QString::fromStdString(*i) // Add the rover name
+                                                + " (" // Delimiters needed for parsing the rover name and status when read
+                                                +  rover_status // Add the rover status
+                                                + ")";
+
+        QListWidgetItem* new_item = new QListWidgetItem(rover_name_and_status);
         new_item->setForeground(Qt::red);
         ui.rover_list->addItem(new_item);
+        
+
     }
-
-    setupSubscribers();
-}
-
-void RoverGUIPlugin::setupPublishers()
-{
-    // Set the robot to accept manual control. Latch so even if the robot connects later it will get the message.
-
-    string control_mode_topic = "/"+selected_rover_name+"/mode";
-
-    control_mode_publishers[selected_rover_name]=nh.advertise<std_msgs::UInt8>(control_mode_topic, 10, true); // last argument sets latch to true
-
-    string joystick_topic = "/"+selected_rover_name+"/joystick";
-    displayLogMessage("Setting up joystick publisher " + QString::fromStdString(joystick_topic));
-    joystick_publisher = nh.advertise<geometry_msgs::Twist>(joystick_topic, 10, this);
-    
-    set<string>::iterator rover_it;
-    for (rover_it = rover_names.begin(); rover_it != rover_names.end(); rover_it++)
-    {
-		targetPickUpPublisher[*rover_it] = nh.advertise<std_msgs::Int16>("/"+*rover_it+"/targetPickUpValue", 10, this);
-		targetDropOffPublisher[*rover_it] = nh.advertise<std_msgs::Int16>("/"+*rover_it+"/targetDropOffValue", 10, this);
-	}
-}
-
-void RoverGUIPlugin::setupSubscribers()
-{
-    // Subscriptions for the selected rover
-        if (!selected_rover_name.empty())
-        {
-    // Create a subscriber to listen for camera events
-    image_transport::ImageTransport it(nh);
-    int frame_rate = 1;
-    // Theroa codex results in the least information being transmitted
-    camera_subscriber = it.subscribe("/"+selected_rover_name+"/camera/image", frame_rate, &RoverGUIPlugin::cameraEventHandler, this, image_transport::TransportHints("theora"));
-
-
-
-    // IMU Subscriptions
-    imu_subscriber = nh.subscribe("/"+selected_rover_name+"/imu", 10, &RoverGUIPlugin::IMUEventHandler, this);
-
-    // Ultrasound Subscriptions
-    us_center_subscriber = nh.subscribe("/"+selected_rover_name+"/sonarCenter", 10, &RoverGUIPlugin::centerUSEventHandler, this);
-    us_left_subscriber = nh.subscribe("/"+selected_rover_name+"/sonarLeft", 10, &RoverGUIPlugin::leftUSEventHandler, this);
-    us_right_subscriber = nh.subscribe("/"+selected_rover_name+"/sonarRight", 10, &RoverGUIPlugin::rightUSEventHandler, this);
-    }
-
-
-    // Subscriptions for all rovers
-
-    set<string>::iterator rover_it;
-    for (rover_it = rover_names.begin(); rover_it != rover_names.end(); rover_it++)
-    {
-        obstacle_subscribers[*rover_it] = nh.subscribe("/"+*rover_it+"/obstacle", 10, &RoverGUIPlugin::obstacleEventHandler, this);
-
-        // Odometry and GPS subscribers
-        encoder_subscribers[*rover_it] = nh.subscribe("/"+*rover_it+"/odom/", 10, &RoverGUIPlugin::encoderEventHandler, this);
-        ekf_subscribers[*rover_it] = nh.subscribe("/"+*rover_it+"/odom/ekf", 10, &RoverGUIPlugin::EKFEventHandler, this);
-        gps_subscribers[*rover_it] = nh.subscribe("/"+*rover_it+"/odom/navsat", 10, &RoverGUIPlugin::GPSEventHandler, this);
-
-        // Target subscribers
-        targetPickUpSubscribers[*rover_it] = nh.subscribe("/"+*rover_it+"/targetPickUpImage", 10, &RoverGUIPlugin::targetPickUpEventHandler, this);
-        targetDropOffSubscribers[*rover_it] = nh.subscribe("/"+*rover_it+"/targetDropOffImage", 10, &RoverGUIPlugin::targetDropOffEventHandler, this);
-    }
-
 }
 
 void RoverGUIPlugin::centerUSEventHandler(const sensor_msgs::Range::ConstPtr& msg)
@@ -752,85 +847,128 @@ void RoverGUIPlugin::autonomousRadioButtonEventHandler(bool marked)
 {
     if (!marked) return;
 
-    // Remember that this rover was set to single rover autonomous control
-    set<string>::iterator it;
-    // And for rovers with all autonomous as their state should now be just autonomous
-     for (it = rover_names.begin(); it != rover_names.end(); it++)
-     {
-         if (rover_control_state[*it]==3) rover_control_state[*it]=2;
-     }
     rover_control_state[selected_rover_name] = 2;
-
-    ui.joystick_frame->setHidden(true);
-    setupPublishers();
 
     std_msgs::UInt8 control_mode_msg;
     control_mode_msg.data = 2; // 2 indicates autonomous control
 
     control_mode_publishers[selected_rover_name].publish(control_mode_msg);
-    if (control_mode_msg.data == 2) displayLogMessage(QString::fromStdString(selected_rover_name)+" changed to autonomous control");
+    displayLogMessage(QString::fromStdString(selected_rover_name)+" changed to autonomous control");
 
     QString return_msg = stopROSJoyNode();
     displayLogMessage(return_msg);
+    
+    //Enable all stop button
+    ui.all_stop_button->setEnabled(true);
+    ui.all_stop_button->setStyleSheet("color: white; border:2px solid white;");
 
-
-}
-
-void RoverGUIPlugin::allAutonomousRadioButtonEventHandler(bool marked)
-{
-    if (!marked) return;
-
-    all_autonomous = true;
-
+    //Hide joystick frame
     ui.joystick_frame->setHidden(true);
-
-    string remember_selected_rover_name = selected_rover_name;
-
-    set<string>::iterator it;
-     for (it = rover_names.begin(); it != rover_names.end(); it++)
-     {
-         selected_rover_name = *it;
-         rover_control_state[*it]=3;
-         setupPublishers();
-         std_msgs::UInt8 control_mode_msg;
-         control_mode_msg.data = 2; // 2 indicates autonomous control
-         control_mode_publishers[selected_rover_name].publish(control_mode_msg);
-     }
-
-     selected_rover_name = remember_selected_rover_name;
-
-    QString return_msg = stopROSJoyNode();
-    displayLogMessage(return_msg);
 }
 
 void RoverGUIPlugin::joystickRadioButtonEventHandler(bool marked)
 {
     if (!marked) return;
 
-    all_autonomous = false;
-
-    // Remember that this rover was set to joystick control
-    set<string>::iterator it;
-    // And for rovers with all autonomous as their state should now be just autonomous
-     for (it = rover_names.begin(); it != rover_names.end(); it++)
-     {
-         if (rover_control_state[*it]==3) rover_control_state[*it]=2;
-         else if (rover_control_state[*it]==0) rover_control_state[*it] = 1;
-     }
     rover_control_state[selected_rover_name] = 1;
-
-    setupPublishers();
-    ui.joystick_frame->setHidden(false);
+    displayLogMessage("Setting up joystick publisher " + QString::fromStdString("/"+selected_rover_name+"/joystick"));
+    joystick_publisher = nh.advertise<geometry_msgs::Twist>("/"+selected_rover_name+"/joystick", 10, this);
 
     std_msgs::UInt8 control_mode_msg;
     control_mode_msg.data = 1; // 1 indicates manual control
 
     control_mode_publishers[selected_rover_name].publish(control_mode_msg);
+    displayLogMessage(QString::fromStdString(selected_rover_name)+" changed to joystick control");\
 
     QString return_msg = startROSJoyNode();
     displayLogMessage(return_msg);
+    
+    //Enable all autonomous button
+    ui.all_autonomous_button->setEnabled(true);
+    ui.all_autonomous_button->setStyleSheet("color: white; border:2px solid white;");
+    
+    //Show joystick frame
+    ui.joystick_frame->setHidden(false);
+}
 
-    displayLogMessage(QString::fromStdString(selected_rover_name)+" changed to joystick control");\
+void RoverGUIPlugin::allAutonomousButtonEventHandler()
+{
+    displayLogMessage("changing all rovers to autonomous control...");
+
+    std::string remember_selected_rover_name = selected_rover_name;
+    int remember_selected_index = ui.rover_list->currentRow();
+    int selected_index = -1; // zero array indexing, ensure last selected index is in range
+
+    // manually trigger the autonomous radio button event for all rovers
+    for (set<string>::iterator it = rover_names.begin(); it != rover_names.end(); it++)
+    {
+        selected_index++;
+        selected_rover_name = *it;
+        autonomousRadioButtonEventHandler(true);
+    }
+
+    // trigger the current rover changed event:
+    // if we previously selected a rover, keep that rover selected
+    if (remember_selected_index >= 0)
+    {
+        selected_rover_name = remember_selected_rover_name;
+        ui.rover_list->setCurrentItem(ui.rover_list->item(remember_selected_index));
+    }
+    // otherwise, default to the last rover in the rover list
+    else
+    {
+        ui.rover_list->setCurrentItem(ui.rover_list->item(selected_index));
+    }
+
+    ui.joystick_control_radio_button->setEnabled(true);
+    ui.autonomous_control_radio_button->setEnabled(true);
+    ui.joystick_control_radio_button->setChecked(false);
+    ui.autonomous_control_radio_button->setChecked(true);
+    ui.joystick_frame->setHidden(true);
+    
+    //Disable all autonomous button
+    ui.all_autonomous_button->setEnabled(false);
+    ui.all_autonomous_button->setStyleSheet("color: grey; border:2px solid grey;");
+}
+
+void RoverGUIPlugin::allStopButtonEventHandler()
+{
+    displayLogMessage("changing all rovers to manual control...");
+
+    std::string remember_selected_rover_name = selected_rover_name;
+    int remember_selected_index = ui.rover_list->currentRow();
+    int selected_index = -1; // zero array indexing, ensure last selected index is in range
+
+    // manually trigger the manual radio button event for all rovers
+    for (set<string>::iterator it = rover_names.begin(); it != rover_names.end(); it++)
+    {
+        selected_index++;
+        selected_rover_name = *it;
+        joystickRadioButtonEventHandler(true);
+    }
+
+    // trigger the current rover changed event:
+    // if we previously selected a rover, keep that rover selected
+    if (remember_selected_index >= 0)
+    {
+        selected_rover_name = remember_selected_rover_name;
+        ui.rover_list->setCurrentItem(ui.rover_list->item(remember_selected_index));
+    }
+    // otherwise, default to the last rover in the rover list
+    else
+    {
+        ui.rover_list->setCurrentItem(ui.rover_list->item(selected_index));
+    }
+
+    ui.joystick_control_radio_button->setEnabled(true);
+    ui.autonomous_control_radio_button->setEnabled(true);
+    ui.joystick_control_radio_button->setChecked(true);
+    ui.autonomous_control_radio_button->setChecked(false);
+    ui.joystick_frame->setHidden(false);
+    
+    //Disable all stop button
+    ui.all_stop_button->setEnabled(false);
+    ui.all_stop_button->setStyleSheet("color: grey; border:2px solid grey;");
 }
 
 void RoverGUIPlugin::buildSimulationButtonEventHandler()
@@ -1017,7 +1155,6 @@ void RoverGUIPlugin::buildSimulationButtonEventHandler()
    ui.clear_simulation_button->setEnabled(true);
 
    ui.visualize_simulation_button->setStyleSheet("color: white;border:1px solid white;");
-
    ui.clear_simulation_button->setStyleSheet("color: white;border:1px solid white;");
 
    displayLogMessage("Finished building simulation.");
@@ -1074,11 +1211,18 @@ void RoverGUIPlugin::clearSimulationButtonEventHandler()
     us_left_subscriber.shutdown();
     us_right_subscriber.shutdown();
     imu_subscriber.shutdown();
-    for (map<string,ros::Subscriber>::iterator it=obstacle_subscribers.begin(); it!=obstacle_subscribers.end(); ++it) it->second.shutdown();
 
+    // Possible error - the following seems to shutdown all subscribers not just those from simulation
+
+    for (map<string,ros::Subscriber>::iterator it=status_subscribers.begin(); it!=status_subscribers.end(); ++it) it->second.shutdown();
+    status_subscribers.clear();
+
+    for (map<string,ros::Subscriber>::iterator it=obstacle_subscribers.begin(); it!=obstacle_subscribers.end(); ++it) it->second.shutdown();
     obstacle_subscribers.clear();
+
     for (map<string,ros::Subscriber>::iterator it=targetPickUpSubscribers.begin(); it!=targetPickUpSubscribers.end(); ++it) it->second.shutdown();
     targetPickUpSubscribers.clear();
+
     for (map<string,ros::Subscriber>::iterator it=targetDropOffSubscribers.begin(); it!=targetDropOffSubscribers.end(); ++it) it->second.shutdown();
     targetDropOffSubscribers.clear();
     camera_subscriber.shutdown();
@@ -1130,7 +1274,6 @@ void RoverGUIPlugin::visualizeSimulationButtonEventHandler()
         displayLogMessage("Visualizing simulation...");
 
         QProcess* sim_client_process = sim_mgr.startGazeboClient();
-        connect(sim_client_process, SIGNAL(finished(int)), this, SLOT(gazeboClientFinishedEventHandler()));
     }
     else
     {
@@ -1709,14 +1852,6 @@ void RoverGUIPlugin::readRoverModelXML(QString path)
 
 }
 
-void RoverGUIPlugin::gazeboClientFinishedEventHandler()
-{
-    displayLogMessage("Gazebo client exited");
-    display_sim_visualization = false;
-    sim_mgr.cleanUpGazeboClient();
-}
-
-
 void RoverGUIPlugin::gazeboServerFinishedEventHandler()
 {
 
@@ -1725,6 +1860,7 @@ void RoverGUIPlugin::gazeboServerFinishedEventHandler()
     ui.visualize_simulation_button->setEnabled(false);
     ui.clear_simulation_button->setEnabled(false);
     ui.build_simulation_button->setEnabled(true);
+
     ui.visualize_simulation_button->setStyleSheet("color: grey; border:2px solid grey;");
     ui.clear_simulation_button->setStyleSheet("color: grey; border:2px solid grey;");
     ui.build_simulation_button->setStyleSheet("color: white; border:1px solid white;");
@@ -1732,7 +1868,6 @@ void RoverGUIPlugin::gazeboServerFinishedEventHandler()
 
 bool RoverGUIPlugin::eventFilter(QObject *target, QEvent *event)
 {
-
     geometry_msgs::Twist standardized_joy_msg;
     if (joystick_publisher)
     {
@@ -1744,6 +1879,8 @@ bool RoverGUIPlugin::eventFilter(QObject *target, QEvent *event)
             bool direction_key = true;
 
             float speed = 0.5;
+
+            // displayLogMessage("Key press");
 
             switch( keyEvent->key() )
             {
@@ -1780,6 +1917,15 @@ bool RoverGUIPlugin::eventFilter(QObject *target, QEvent *event)
         {
             QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
 
+            // Don't process auto repeat release events. Just the actual key release.
+            if (keyEvent->isAutoRepeat())
+            {
+                // displayLogMessage("Ignoring auto repeat release.");
+                return rqt_gui_cpp::Plugin::eventFilter(target, event);
+            }
+
+            // displayLogMessage("Key release");
+
             if (keyEvent->key() == Qt::Key_I || keyEvent->key() == Qt::Key_J || keyEvent->key() == Qt::Key_K || keyEvent->key() == Qt::Key_L )
             {
                 standardized_joy_msg.linear.x = 0;
@@ -1801,6 +1947,12 @@ bool RoverGUIPlugin::eventFilter(QObject *target, QEvent *event)
     }
         // Pass on the event since it wasn't handled by us
     return rqt_gui_cpp::Plugin::eventFilter(target, event);
+}
+
+// Refocus on the main ui widget so the rover list doesn't start capturing key strokes making keyboard rover driving not work.
+void RoverGUIPlugin::refocusKeyboardEventHandler()
+{
+    widget->setFocus();
 }
 
 } // End namespace
