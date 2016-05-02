@@ -1,4 +1,8 @@
+#include "ALSAController.h"
 #include <ros/ros.h>
+
+// STL Headers
+#include <utility> // For pair
 
 //ROS libraries
 #include <angles/angles.h>
@@ -86,7 +90,12 @@ void publishStatusTimerEventHandler(const ros::TimerEvent& event);
 void targetsCollectedHandler(const std_msgs::Int16::ConstPtr& message);
 void killSwitchTimerEventHandler(const ros::TimerEvent& event);
 
+  // Create the ALSA controller
+  ALSAController alsa_controller;
+
+
 int main(int argc, char **argv) {
+
 
     gethostname(host, sizeof (host));
     string hostname(host);
@@ -175,14 +184,13 @@ void mobilityStateMachine(const ros::TimerEvent&) {
 				}
 				//Otherwise, assign a new goal
 				else {
-					 //select new heading from Gaussian distribution around current heading
-					goalLocation.theta = rng->gaussian(currentLocation.theta, 0.25);
-					
-					//select new position 50 cm from current location
-					goalLocation.x = currentLocation.x + (0.5 * cos(goalLocation.theta));
-					goalLocation.y = currentLocation.y + (0.5 * sin(goalLocation.theta));
+				  // Use the ALSA controller to select the next goal location
+				  pair<float, float> current_position = make_pair(currentLocation.x, currentLocation.y); 
+				  pair<float, float> alsa_position = alsa_controller.getNextGoalPosition( current_position );
+				  goalLocation.x = alsa_position.first;
+				  goalLocation.y = alsa_position.second;
 				}
-				
+
 				//Purposefully fall through to next case without breaking
 			}
 			
@@ -209,6 +217,7 @@ void mobilityStateMachine(const ros::TimerEvent&) {
 			//Stay in this state until angle is at least PI/2
 			case STATE_MACHINE_TRANSLATE: {
 				stateMachineMsg.data = "TRANSLATING";
+
 				if (fabs(angles::shortest_angular_distance(currentLocation.theta, atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x))) < M_PI_2) {
 					setVelocity(0.3, 0.0);
 				}
@@ -346,7 +355,7 @@ void joyCmdHandler(const geometry_msgs::Twist::ConstPtr& message) {
 void publishStatusTimerEventHandler(const ros::TimerEvent&)
 {
   std_msgs::String msg;
-  msg.data = "online";
+  msg.data = "UNM ALSA";
   status_publisher.publish(msg);
 }
 
