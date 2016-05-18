@@ -5,15 +5,22 @@
 
 using namespace std;
 
+struct GoalState
+{
+  float x;
+  float y;
+  float yaw;
+};
+
 class ALSAController
 {
  public:
   ALSAController();
-  pair<float, float> getNextGoalPosition(pair<float, float> current_position);
+  GoalState getNextGoalPosition(pair<float, float> current_position);
 
   ~ALSAController();
 
  private:
-  float min_step_length = 0.05; // Define the minimum step length to be 5 cm
-  float mu = 1.2; // mu is the PDF inverse power law exponent
+  float min_step_length = 0.5; // Define the minimum step length to be 5 cm
+  float mu = 1.5; // mu is the PDF inverse power law exponent
 };

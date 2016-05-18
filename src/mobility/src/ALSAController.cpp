@@ -8,8 +8,10 @@ ALSAController::ALSAController()
   
 }
 
-pair<float, float> ALSAController::getNextGoalPosition(pair<float, float> current_position)
+GoalState ALSAController::getNextGoalPosition(pair<float, float> current_position)
 {
+  GoalState goal_state;
+  
   float xmin = min_step_length; // Set the minimum step length
   pair<float, float> goal_position;
 
@@ -19,14 +21,14 @@ pair<float, float> ALSAController::getNextGoalPosition(pair<float, float> curren
   
   //select new position with distance selected from a power law distribution
   float unif_var = rand()*1.0/RAND_MAX;
-  float scale = (mu-1)/xmin; // Scale to have area = 1 (i.e. PDF)
-  float step_length =  scale*pow(unif_var/xmin, -mu); // Calcuate how far to travel
+  
+  float step_length = xmin*pow(unif_var,1/(mu-1));
 
   // Populate the position to return
-  goal_position = make_pair( current_position.first + (step_length * cos(goal_yaw)),
-			     current_position.second + (step_length * sin(goal_yaw)) );		      
+  goal_state.x = current_position.first + (step_length * cos(goal_yaw));
+  goal_state.y = current_position.second + (step_length * sin(goal_yaw));	   goal_state.yaw = goal_yaw;      
   
-  return goal_position;
+  return goal_state;
 }
 
 ALSAController::~ALSAController()

@@ -186,9 +186,16 @@ void mobilityStateMachine(const ros::TimerEvent&) {
 				else {
 				  // Use the ALSA controller to select the next goal location
 				  pair<float, float> current_position = make_pair(currentLocation.x, currentLocation.y); 
-				  pair<float, float> alsa_position = alsa_controller.getNextGoalPosition( current_position );
-				  goalLocation.x = alsa_position.first;
-				  goalLocation.y = alsa_position.second;
+				  GoalState goal_state = alsa_controller.getNextGoalPosition( current_position );
+				  goalLocation.x = goal_state.x;
+				  goalLocation.y = goal_state.y;
+				  goalLocation.theta = goal_state.yaw;
+				  
+				  
+
+				  float len = sqrt(pow(currentLocation.x-goalLocation.x,2)+pow(currentLocation.x-goalLocation.x,2));
+
+				  ROS_INFO("%s Goal: x=%f, y=%f, yaw=%f, length=%f\n", host, goalLocation.x, goalLocation.y, goalLocation.theta, len);
 				}
 
 				//Purposefully fall through to next case without breaking
